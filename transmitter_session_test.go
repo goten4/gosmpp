@@ -17,7 +17,7 @@ func TestTransmitter(t *testing.T) {
 	t.Run("binding", func(t *testing.T) {
 		auth := nextAuth()
 		transmitter, err := NewTransmitterSession(NonTLSDialer, auth, TransmitSettings{
-			Timeout: time.Second,
+			WriteTimeout: time.Second,
 
 			OnSubmitError: func(p pdu.PDU, err error) {
 				t.Fatal(err)
@@ -47,11 +47,11 @@ func TestTransmitter(t *testing.T) {
 		require.Nil(t, err)
 	})
 
-	errorHandling := func(t *testing.T, trigger func(*transmitter)) {
+	errorHandling := func(t *testing.T, trigger func(*writer)) {
 		conn, err := net.Dial("tcp", "smscsim.melroselabs.com:2775")
 		require.Nil(t, err)
 
-		var tr transmitter
+		var tr writer
 		tr.input = make(chan pdu.PDU, 1)
 
 		c := NewConnection(conn)
@@ -69,11 +69,11 @@ func TestTransmitter(t *testing.T) {
 		tr.ctx, tr.cancel = context.WithCancel(context.Background())
 
 		var count int32
-		tr.settings.OnClosed = func(state State) {
+		tr.settings.onClosed = func(state State) {
 			atomic.AddInt32(&count, 1)
 		}
 
-		tr.settings.OnSubmitError = func(p pdu.PDU, err error) {
+		tr.settings.onSubmitError = func(p pdu.PDU, err error) {
 			require.NotNil(t, err)
 			_, ok := p.(*pdu.CancelSM)
 			require.True(t, ok)
@@ -87,21 +87,21 @@ func TestTransmitter(t *testing.T) {
 	}
 
 	t.Run("errorHandling1", func(t *testing.T) {
-		errorHandling(t, func(tr *transmitter) {
+		errorHandling(t, func(tr *writer) {
 			var p pdu.CancelSM
 			tr.check(&p, 100, fmt.Errorf("fake error"))
 		})
 	})
 
 	t.Run("errorHandling2", func(t *testing.T) {
-		errorHandling(t, func(tr *transmitter) {
+		errorHandling(t, func(tr *writer) {
 			var p pdu.CancelSM
 			tr.check(&p, 0, fmt.Errorf("fake error"))
 		})
 	})
 
 	t.Run("errorHandling3", func(t *testing.T) {
-		errorHandling(t, func(tr *transmitter) {
+		errorHandling(t, func(tr *writer) {
 			var p pdu.CancelSM
 			tr.check(&p, 0, &net.DNSError{IsTemporary: false})
 		})

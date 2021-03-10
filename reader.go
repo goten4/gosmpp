@@ -13,80 +13,69 @@ const (
 	defaultReadTimeout = 2 * time.Second
 )
 
-// ReceiveSettings is event listener for Receiver.
-type ReceiveSettings struct {
-	// Timeout represents conn read timeout.
+// readerSettings is event listener for reader.
+type readerSettings struct {
+	// timeout represents conn read timeout.
 	// This field is very important to detect connection failure.
 	// Default: 2 secs
-	Timeout time.Duration
+	timeout time.Duration
 
-	// OnPDU handles received PDU from SMSC.
+	// onPDU handles received PDU from SMSC.
 	//
 	// `Responded` flag indicates this pdu is responded automatically,
 	// no manual respond needed.
-	OnPDU PDUCallback
+	onPDU PDUCallback
 
-	// OnReceivingError notifies happened error while reading PDU
+	// onReceivingError notifies happened error while reading PDU
 	// from SMSC.
-	OnReceivingError ErrorCallback
+	onReceivingError ErrorCallback
 
-	// OnRebindingError notifies error while rebinding.
-	OnRebindingError ErrorCallback
+	// onRebindingError notifies error while rebinding.
+	onRebindingError ErrorCallback
 
-	// OnClosed notifies `closed` event due to State.
-	OnClosed ClosedCallback
+	// onClosed notifies `closed` event due to State.
+	onClosed ClosedCallback
 
 	response func(pdu.PDU)
 }
 
-func (s *ReceiveSettings) normalize() {
-	if s.Timeout <= 0 {
-		s.Timeout = defaultReadTimeout
+func (s *readerSettings) normalize() {
+	if s.timeout <= 0 {
+		s.timeout = defaultReadTimeout
 	}
 }
 
-type receiver struct {
+type reader struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
-	settings ReceiveSettings
+	settings readerSettings
 	conn     *Connection
 	state    int32
 }
 
-// NewReceiver returns new Receiver, bound with inputStream stream.
-func NewReceiver(conn *Connection, settings ReceiveSettings) Receiver {
-	return newReceiver(conn, settings, true)
-}
-
-func newReceiver(conn *Connection, settings ReceiveSettings, startDaemon bool) *receiver {
+func newReader(conn *Connection, settings readerSettings) (r *reader) {
 	settings.normalize()
 
-	r := &receiver{
+	r = &reader{
 		settings: settings,
 		conn:     conn,
 	}
 	r.ctx, r.cancel = context.WithCancel(context.Background())
-
-	// start receiver daemon(s)
-	if startDaemon {
-		r.start()
-	}
-
-	return r
+	return
 }
 
 // SystemID returns tagged SystemID, returned from bind_resp from SMSC.
-func (t *receiver) SystemID() string {
+func (t *reader) SystemID() string {
 	return t.conn.systemID
 }
 
-// Close receiver, close connection and stop underlying daemons.
-func (t *receiver) Close() (err error) {
+// Close reader, close connection and stop underlying daemons.
+func (t *reader) Close() (err error) {
 	return t.close(ExplicitClosing)
 }
 
-func (t *receiver) close(state State) (err error) {
+func (t *reader) close(state State) (err error) {
 	if atomic.CompareAndSwapInt32(&t.state, 0, 1) {
 		// cancel to notify stop
 		t.cancel()
@@ -102,21 +91,21 @@ func (t *receiver) close(state State) (err error) {
 			err = t.conn.Close()
 		}
 
-		// notify receiver closed
-		if t.settings.OnClosed != nil {
-			t.settings.OnClosed(state)
+		// notify reader closed
+		if t.settings.onClosed != nil {
+			t.settings.onClosed(state)
 		}
 	}
 	return
 }
 
-func (t *receiver) closing(state State) {
+func (t *reader) closing(state State) {
 	go func() {
 		_ = t.close(state)
 	}()
 }
 
-func (t *receiver) start() {
+func (t *reader) start() {
 	t.wg.Add(1)
 	go func() {
 		t.loop()
@@ -125,13 +114,13 @@ func (t *receiver) start() {
 }
 
 // check error and do closing if need
-func (t *receiver) check(err error) (closing bool) {
+func (t *reader) check(err error) (closing bool) {
 	if err == nil {
 		return
 	}
 
-	if t.settings.OnReceivingError != nil {
-		t.settings.OnReceivingError(err)
+	if t.settings.onReceivingError != nil {
+		t.settings.onReceivingError(err)
 	}
 
 	closing = true
@@ -139,7 +128,7 @@ func (t *receiver) check(err error) (closing bool) {
 }
 
 // PDU loop processing
-func (t *receiver) loop() {
+func (t *reader) loop() {
 	for {
 		select {
 		case <-t.ctx.Done():
@@ -149,7 +138,7 @@ func (t *receiver) loop() {
 
 		// read pdu from conn
 		var p pdu.PDU
-		err := t.conn.SetReadTimeout(t.settings.Timeout)
+		err := t.conn.SetReadTimeout(t.settings.timeout)
 		if err == nil {
 			p, err = pdu.Parse(t.conn)
 		}
@@ -164,7 +153,7 @@ func (t *receiver) loop() {
 	}
 }
 
-func (t *receiver) handleOrClose(p pdu.PDU) (closing bool) {
+func (t *reader) handleOrClose(p pdu.PDU) (closing bool) {
 	if p != nil {
 		switch pp := p.(type) {
 		case *pdu.EnquireLink:
@@ -190,8 +179,8 @@ func (t *receiver) handleOrClose(p pdu.PDU) (closing bool) {
 				responded = true
 			}
 
-			if t.settings.OnPDU != nil {
-				t.settings.OnPDU(p, responded)
+			if t.settings.onPDU != nil {
+				t.settings.onPDU(p, responded)
 			}
 		}
 	}

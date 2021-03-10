@@ -7,8 +7,8 @@ import (
 	"github.com/linxGnu/gosmpp/pdu"
 )
 
-// TransceiveSettings is listener for Transceiver.
-type TransceiveSettings struct {
+// clientSettings is configuration for SMPP client.
+type clientSettings struct {
 	// WriteTimeout is timeout for submitting PDU.
 	WriteTimeout time.Duration
 
@@ -43,103 +43,103 @@ type TransceiveSettings struct {
 	OnClosed ClosedCallback
 }
 
-type transceiver struct {
-	settings TransceiveSettings
+type client struct {
+	settings clientSettings
 	conn     *Connection
-	in       *receiver
-	out      *transmitter
+	reader   *reader
+	writer   *writer
 	state    int32
 }
 
-// NewTransceiver creates new Transceiver from bound connection.
-func NewTransceiver(conn *Connection, settings TransceiveSettings) Transceiver {
-	t := &transceiver{
+// newClient creates new client from bound connection.
+func newClient(conn *Connection, settings clientSettings) *client {
+	c := &client{
 		settings: settings,
 		conn:     conn,
 	}
 
-	t.out = newTransmitter(conn, TransmitSettings{
-		Timeout: settings.WriteTimeout,
+	c.writer = newWriter(conn, writerSettings{
+		timeout: settings.WriteTimeout,
 
-		EnquireLink: settings.EnquireLink,
+		enquireLink: settings.EnquireLink,
 
-		OnSubmitError: settings.OnSubmitError,
+		onSubmitError: settings.OnSubmitError,
 
-		OnClosed: func(state State) {
+		onClosed: func(state State) {
 			switch state {
 			case ExplicitClosing:
 				return
 
 			case ConnectionIssue:
 				// also close input
-				_ = t.in.Close()
+				_ = c.reader.Close()
 
-				if t.settings.OnClosed != nil {
-					t.settings.OnClosed(ConnectionIssue)
+				if c.settings.OnClosed != nil {
+					c.settings.OnClosed(ConnectionIssue)
 				}
 			}
 		},
-	}, false)
+	})
 
-	t.in = newReceiver(conn, ReceiveSettings{
-		Timeout: settings.ReadTimeout,
+	c.reader = newReader(conn, readerSettings{
+		timeout: settings.ReadTimeout,
 
-		OnPDU: settings.OnPDU,
+		onPDU: settings.OnPDU,
 
-		OnReceivingError: settings.OnReceivingError,
+		onReceivingError: settings.OnReceivingError,
 
-		OnClosed: func(state State) {
+		onClosed: func(state State) {
 			switch state {
 			case ExplicitClosing:
 				return
 
 			case InvalidStreaming, UnbindClosing:
 				// also close output
-				_ = t.out.Close()
+				_ = c.writer.Close()
 
-				if t.settings.OnClosed != nil {
-					t.settings.OnClosed(state)
+				if c.settings.OnClosed != nil {
+					c.settings.OnClosed(state)
 				}
 			}
 		},
 
 		response: func(p pdu.PDU) {
-			if t.out.Submit(p) != nil { // only happened when transceiver is closed
-				_, _ = t.out.write(marshal(p))
+			if c.writer.submit(p) != nil { // only happened when transceiver is closed
+				_, _ = c.writer.write(marshal(p))
 			}
 		},
-	}, false)
+	})
 
-	t.out.start()
-	t.in.start()
+	c.writer.start()
+	c.reader.start()
 
-	return t
+	return c
 }
 
 // SystemID returns tagged SystemID, returned from bind_resp from SMSC.
-func (t *transceiver) SystemID() string {
-	return t.conn.systemID
+func (c *client) SystemID() string {
+	return c.conn.systemID
 }
 
 // Close transceiver and stop underlying daemons.
-func (t *transceiver) Close() (err error) {
-	if atomic.CompareAndSwapInt32(&t.state, 0, 1) {
+func (c *client) Close() (err error) {
+	if atomic.CompareAndSwapInt32(&c.state, 0, 1) {
 		// closing input and output
-		_ = t.out.close(StoppingProcessOnly)
-		_ = t.in.close(StoppingProcessOnly)
+		_ = c.writer.close(StoppingProcessOnly)
+		_ = c.reader.close(StoppingProcessOnly)
 
 		// close underlying conn
-		err = t.conn.Close()
+		err = c.conn.Close()
 
 		// notify transceiver closed
-		if t.settings.OnClosed != nil {
-			t.settings.OnClosed(ExplicitClosing)
+		if c.settings.OnClosed != nil {
+			c.settings.OnClosed(ExplicitClosing)
 		}
 	}
 	return
 }
 
 // Submit a PDU.
-func (t *transceiver) Submit(p pdu.PDU) error {
-	return t.out.Submit(p)
+func (c *client) Submit(p pdu.PDU) error {
+	return c.writer.submit(p)
 }

@@ -36,19 +36,21 @@ func newBindRequest(s Auth, bindingType pdu.BindingType) (bindReq *pdu.BindReque
 }
 
 // ConnectAsReceiver connects to SMSC as Receiver.
-func ConnectAsReceiver(dialer Dialer, s Auth) (conn *Connection, err error) {
-	conn, err = connect(dialer, s.SMSC, newBindRequest(s, pdu.Receiver))
-	return
+func ConnectAsReceiver(dialer Dialer, s Auth) (*Connection, error) {
+	return connectAs(pdu.Receiver, dialer, s)
 }
 
 // ConnectAsTransmitter connects to SMSC as Transmitter.
-func ConnectAsTransmitter(dialer Dialer, s Auth) (conn *Connection, err error) {
-	conn, err = connect(dialer, s.SMSC, newBindRequest(s, pdu.Transmitter))
-	return
+func ConnectAsTransmitter(dialer Dialer, s Auth) (*Connection, error) {
+	return connectAs(pdu.Transmitter, dialer, s)
 }
 
 // ConnectAsTransceiver connects to SMSC as Transceiver.
-func ConnectAsTransceiver(dialer Dialer, s Auth) (conn *Connection, err error) {
-	conn, err = connect(dialer, s.SMSC, newBindRequest(s, pdu.Transceiver))
-	return
+func ConnectAsTransceiver(dialer Dialer, s Auth) (*Connection, error) {
+	return connectAs(pdu.Transceiver, dialer, s)
+}
+
+// connectAs connects to SMSC as specified BindingType.
+func connectAs(b pdu.BindingType, dialer Dialer, s Auth) (*Connection, error) {
+	return connect(dialer, s.SMSC, newBindRequest(s, b))
 }

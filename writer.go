@@ -16,82 +16,66 @@ const (
 )
 
 var (
-	// ErrTransmitterClosing indicates transmitter is closing. Can not send any PDU.
-	ErrTransmitterClosing = fmt.Errorf("Transmitter is closing. Can not send PDU to SMSC")
+	// ErrSessionClosing indicates session is closing, cannot send any PDU.
+	ErrSessionClosing = fmt.Errorf("client is closing, cannot send PDU to SMSC")
 )
 
-// TransmitSettings is listener for transmitter.
-type TransmitSettings struct {
-	// Timeout is timeout/deadline for submitting PDU.
-	Timeout time.Duration
+// writerSettings is listener for writer.
+type writerSettings struct {
+	// timeout is timeout/deadline for submitting PDU.
+	timeout time.Duration
 
-	// EnquireLink periodically sends EnquireLink to SMSC.
+	// enquireLink periodically sends enquireLink to SMSC.
 	// The duration must not be smaller than 1 minute.
 	//
 	// Zero duration disables auto enquire link.
-	EnquireLink time.Duration
+	enquireLink time.Duration
 
-	// OnSubmitError notifies fail-to-submit PDU with along error.
-	OnSubmitError PDUErrorCallback
+	// onSubmitError notifies fail-to-submit PDU with along error.
+	onSubmitError PDUErrorCallback
 
-	// OnRebindingError notifies error while rebinding.
-	OnRebindingError ErrorCallback
+	// onRebindingError notifies error while rebinding.
+	onRebindingError ErrorCallback
 
-	// OnClosed notifies `closed` event due to State.
-	OnClosed ClosedCallback
+	// onClosed notifies `closed` event due to State.
+	onClosed ClosedCallback
 }
 
-func (s *TransmitSettings) normalize() {
-	if s.EnquireLink <= EnquireLinkIntervalMinimum {
-		s.EnquireLink = EnquireLinkIntervalMinimum
+func (s *writerSettings) normalize() {
+	if s.enquireLink <= EnquireLinkIntervalMinimum {
+		s.enquireLink = EnquireLinkIntervalMinimum
 	}
 }
 
-type transmitter struct {
+type writer struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
-	settings TransmitSettings
+	settings writerSettings
 	conn     *Connection
 	input    chan pdu.PDU
 	lock     sync.RWMutex
 	state    int32
 }
 
-// NewTransmitter returns new Transmitter.
-func NewTransmitter(conn *Connection, settings TransmitSettings) Transmitter {
-	return newTransmitter(conn, settings, true)
-}
-
-func newTransmitter(conn *Connection, settings TransmitSettings, startDaemon bool) *transmitter {
+func newWriter(conn *Connection, settings writerSettings) (w *writer) {
 	settings.normalize()
 
-	t := &transmitter{
+	w = &writer{
 		settings: settings,
 		conn:     conn,
 		input:    make(chan pdu.PDU, 1),
 	}
-	t.ctx, t.cancel = context.WithCancel(context.Background())
-
-	// start transmitter daemon(s)
-	if startDaemon {
-		t.start()
-	}
-
-	return t
+	w.ctx, w.cancel = context.WithCancel(context.Background())
+	return
 }
 
-// SystemID returns tagged SystemID, returned from bind_resp from SMSC.
-func (t *transmitter) SystemID() string {
-	return t.conn.systemID
-}
-
-// Close transmitter and stop underlying daemons.
-func (t *transmitter) Close() (err error) {
+// Close writer and stop underlying daemons.
+func (t *writer) Close() (err error) {
 	return t.close(ExplicitClosing)
 }
 
-func (t *transmitter) close(state State) (err error) {
+func (t *writer) close(state State) (err error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
@@ -113,9 +97,9 @@ func (t *transmitter) close(state State) (err error) {
 			err = t.conn.Close()
 		}
 
-		// notify transmitter closed
-		if t.settings.OnClosed != nil {
-			t.settings.OnClosed(state)
+		// notify writer closed
+		if t.settings.onClosed != nil {
+			t.settings.onClosed(state)
 		}
 
 		t.state = 1
@@ -124,14 +108,14 @@ func (t *transmitter) close(state State) (err error) {
 	return
 }
 
-func (t *transmitter) closing(state State) {
+func (t *writer) closing(state State) {
 	go func() {
 		_ = t.close(state)
 	}()
 }
 
-// Submit a PDU.
-func (t *transmitter) Submit(p pdu.PDU) (err error) {
+// submit a PDU.
+func (t *writer) submit(p pdu.PDU) (err error) {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
 
@@ -143,15 +127,15 @@ func (t *transmitter) Submit(p pdu.PDU) (err error) {
 		case t.input <- p:
 		}
 	} else {
-		err = ErrTransmitterClosing
+		err = ErrSessionClosing
 	}
 
 	return
 }
 
-func (t *transmitter) start() {
+func (t *writer) start() {
 	t.wg.Add(1)
-	if t.settings.EnquireLink > 0 {
+	if t.settings.enquireLink > 0 {
 		go func() {
 			t.loopWithEnquireLink()
 			t.wg.Done()
@@ -165,7 +149,7 @@ func (t *transmitter) start() {
 }
 
 // PDU loop processing
-func (t *transmitter) loop() {
+func (t *writer) loop() {
 	for p := range t.input {
 		if p != nil {
 			n, err := t.write(marshal(p))
@@ -177,12 +161,12 @@ func (t *transmitter) loop() {
 }
 
 // PDU loop processing with enquire link support
-func (t *transmitter) loopWithEnquireLink() {
-	if t.settings.EnquireLink < EnquireLinkIntervalMinimum {
-		t.settings.EnquireLink = EnquireLinkIntervalMinimum
+func (t *writer) loopWithEnquireLink() {
+	if t.settings.enquireLink < EnquireLinkIntervalMinimum {
+		t.settings.enquireLink = EnquireLinkIntervalMinimum
 	}
 
-	ticker := time.NewTicker(t.settings.EnquireLink)
+	ticker := time.NewTicker(t.settings.enquireLink)
 	defer ticker.Stop()
 
 	// enquireLink payload
@@ -213,13 +197,13 @@ func (t *transmitter) loopWithEnquireLink() {
 }
 
 // check error and do closing if need
-func (t *transmitter) check(p pdu.PDU, n int, err error) (closing bool) {
+func (t *writer) check(p pdu.PDU, n int, err error) (closing bool) {
 	if err == nil {
 		return
 	}
 
-	if t.settings.OnSubmitError != nil {
-		t.settings.OnSubmitError(p, err)
+	if t.settings.onSubmitError != nil {
+		t.settings.onSubmitError(p, err)
 	}
 
 	if n == 0 {
@@ -240,18 +224,18 @@ func (t *transmitter) check(p pdu.PDU, n int, err error) (closing bool) {
 }
 
 // low level writing
-func (t *transmitter) write(v []byte) (n int, err error) {
-	hasTimeout := t.settings.Timeout > 0
+func (t *writer) write(v []byte) (n int, err error) {
+	hasTimeout := t.settings.timeout > 0
 
 	if hasTimeout {
-		err = t.conn.SetWriteTimeout(t.settings.Timeout)
+		err = t.conn.SetWriteTimeout(t.settings.timeout)
 	}
 
 	if err == nil {
 		if n, err = t.conn.Write(v); err != nil &&
 			n == 0 &&
 			hasTimeout &&
-			t.conn.SetWriteTimeout(t.settings.Timeout<<1) == nil {
+			t.conn.SetWriteTimeout(t.settings.timeout<<1) == nil {
 			// retry again with double timeout
 			n, err = t.conn.Write(v)
 		}
