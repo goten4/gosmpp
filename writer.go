@@ -93,6 +93,9 @@ func (t *writer) close(state State) (err error) {
 		_, _ = t.conn.Write(marshal(pdu.NewUnbind()))
 
 		// close connection
+		if t.settings.timeout > 0 {
+			_ = t.conn.SetWriteTimeout(t.settings.timeout)
+		}
 		if state != StoppingProcessOnly {
 			err = t.conn.Close()
 		}
