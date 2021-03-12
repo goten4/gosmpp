@@ -7,8 +7,8 @@ import (
 	"github.com/linxGnu/gosmpp/pdu"
 )
 
-// clientSettings is configuration for SMPP client.
-type clientSettings struct {
+// ClientSettings is configuration for SMPP client.
+type ClientSettings struct {
 	// WriteTimeout is timeout for submitting PDU.
 	WriteTimeout time.Duration
 
@@ -43,17 +43,17 @@ type clientSettings struct {
 	OnClosed ClosedCallback
 }
 
-type client struct {
-	settings clientSettings
+type Client struct {
+	settings ClientSettings
 	conn     *Connection
 	reader   *reader
 	writer   *writer
 	state    int32
 }
 
-// newClient creates new client from bound connection.
-func newClient(conn *Connection, settings clientSettings) *client {
-	c := &client{
+// NewClient creates new client from bound connection.
+func NewClient(conn *Connection, settings ClientSettings) *Client {
+	c := &Client{
 		settings: settings,
 		conn:     conn,
 	}
@@ -117,12 +117,12 @@ func newClient(conn *Connection, settings clientSettings) *client {
 }
 
 // SystemID returns tagged SystemID, returned from bind_resp from SMSC.
-func (c *client) SystemID() string {
+func (c *Client) SystemID() string {
 	return c.conn.systemID
 }
 
 // Close transceiver and stop underlying daemons.
-func (c *client) Close() (err error) {
+func (c *Client) Close() (err error) {
 	if atomic.CompareAndSwapInt32(&c.state, 0, 1) {
 		// closing input and output
 		_ = c.writer.close(StoppingProcessOnly)
@@ -140,6 +140,6 @@ func (c *client) Close() (err error) {
 }
 
 // Submit a PDU.
-func (c *client) Submit(p pdu.PDU) error {
+func (c *Client) Submit(p pdu.PDU) error {
 	return c.writer.submit(p)
 }

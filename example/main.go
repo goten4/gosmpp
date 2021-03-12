@@ -31,7 +31,7 @@ func sendingAndReceiveSMS(wg *sync.WaitGroup) {
 		SystemType: "",
 	}
 
-	trans, err := gosmpp.NewTransceiverSession(gosmpp.NonTLSDialer, auth, gosmpp.TransceiveSettings{
+	trans, err := gosmpp.NewSession(pdu.Transceiver, gosmpp.NonTLSDialer, auth, gosmpp.ClientSettings{
 		EnquireLink: 5 * time.Second,
 
 		WriteTimeout: time.Second,
@@ -67,7 +67,7 @@ func sendingAndReceiveSMS(wg *sync.WaitGroup) {
 
 	// sending SMS(s)
 	for i := 0; i < 1800; i++ {
-		if err = trans.Transceiver().Submit(newSubmitSM()); err != nil {
+		if err = trans.Client().Submit(newSubmitSM()); err != nil {
 			fmt.Println(err)
 		}
 		time.Sleep(time.Second)

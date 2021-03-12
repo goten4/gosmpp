@@ -7,13 +7,13 @@ import (
 	"github.com/linxGnu/gosmpp/pdu"
 )
 
-// session represents SMPP session.
-type session struct {
+// Session represents SMPP Session.
+type Session struct {
 	dialer Dialer
 	auth   Auth
 
 	originalOnClosed func(State)
-	settings         clientSettings
+	settings         ClientSettings
 
 	bindingType       pdu.BindingType
 	rebindingInterval time.Duration
@@ -24,7 +24,7 @@ type session struct {
 	rebinding int32
 }
 
-// newSession creates new SMPP session.
+// NewSession creates new SMPP Session.
 //
 // Session will `non-stop`, automatically rebind (create new and authenticate connection with SMSC) when
 // unexpected error happened.
@@ -32,10 +32,10 @@ type session struct {
 // `rebindingInterval` indicates duration that Session has to wait before rebinding again.
 //
 // Setting `rebindingInterval <= 0` will disable `auto-rebind` functionality.
-func newSession(b pdu.BindingType, dialer Dialer, auth Auth, settings clientSettings, rebindingInterval time.Duration) (s *session, err error) {
+func NewSession(b pdu.BindingType, dialer Dialer, auth Auth, settings ClientSettings, rebindingInterval time.Duration) (s *Session, err error) {
 	conn, err := connectAs(b, dialer, auth)
 	if err == nil {
-		s = &session{
+		s = &Session{
 			dialer:            dialer,
 			auth:              auth,
 			bindingType:       b,
@@ -63,7 +63,7 @@ func newSession(b pdu.BindingType, dialer Dialer, auth Auth, settings clientSett
 		}
 
 		// create new client
-		c := newClient(conn, s.settings)
+		c := NewClient(conn, s.settings)
 
 		// bind to session
 		s.r.Store(c)
@@ -72,13 +72,13 @@ func newSession(b pdu.BindingType, dialer Dialer, auth Auth, settings clientSett
 }
 
 // Client returns bound client.
-func (s *session) Client() (c *client) {
-	c, _ = s.r.Load().(*client)
+func (s *Session) Client() (c *Client) {
+	c, _ = s.r.Load().(*Client)
 	return
 }
 
-// Close session.
-func (s *session) Close() (err error) {
+// Close Session.
+func (s *Session) Close() (err error) {
 	if atomic.CompareAndSwapInt32(&s.state, 0, 1) {
 		// close underlying client
 		err = s.close()
@@ -87,14 +87,14 @@ func (s *session) Close() (err error) {
 }
 
 // close underlying client
-func (s *session) close() (err error) {
+func (s *Session) close() (err error) {
 	if c := s.Client(); c != nil {
 		err = c.Close()
 	}
 	return
 }
 
-func (s *session) rebind() {
+func (s *Session) rebind() {
 	if atomic.CompareAndSwapInt32(&s.rebinding, 0, 1) {
 		// close underlying client
 		_ = s.close()
@@ -107,7 +107,7 @@ func (s *session) rebind() {
 				}
 				time.Sleep(s.rebindingInterval)
 			} else {
-				c := newClient(conn, s.settings)
+				c := NewClient(conn, s.settings)
 
 				// bind to session
 				s.r.Store(c)
